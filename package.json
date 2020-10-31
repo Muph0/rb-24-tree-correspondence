@@ -1,0 +1,14 @@
+{
+  "name": "tree-correspondence",
+  "version": "1.0.0",
+  "description": "This is a browser typescript project template.",
+  "main": "js/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Jan Kytka",
+  "license": "MIT",
+  "dependencies": {
+    "typescript": "^4.0.3"
+  }
+}

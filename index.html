@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset=utf-8>
+    <title>RB - (2,4) tree correspondence</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            background: white;
+            overflow: hidden;
+        }
+
+        #control {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background-color: red;
+            margin: 40px;
+            width: 180px;
+        }
+
+        #control input#value {
+            box-sizing: border-box;
+            display: block;
+            width: 100%;
+        }
+
+        #control #add, #control #remove {
+            box-sizing: border-box;
+            border-width: 2px;
+            width: 50%;
+            display: block;
+        }
+
+        #control #add {
+            position: absolute;
+        }
+        #control #remove {
+            float: right;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="control">
+        <input id="value" type="number" />
+        <div>
+            <input id="add" type="button" value="Add" />
+            <input id="remove" type="button" value="Remove" />
+        </div>
+    </div>
+    <canvas id="canvas"></canvas>
+    <script data-main="js/main.js" src="js/require.js"></script>
+</body>
+
+</html>
