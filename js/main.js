@@ -399,11 +399,20 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
             node = node.parent;
         return node;
     }
+    function tagNodeInfo(node) {
+        return node.parent
+            ? (node === node.parent.left ? 'left' : 'right') + '_of_' + node.parent.key
+            : 'root';
+    }
+    const nodeRadius = 20;
+    const boxSize = nodeRadius * 2 * 1.5;
+    const nullWidth = nodeRadius * 1.9;
     class VisualTree extends RBTree_1.RBTree {
         constructor(canvas, animationDuration) {
             super();
             this.canvas = canvas;
             this.animationDuration = 1000.0;
+            this.currentAnimation = 0;
             if (animationDuration)
                 this.animationDuration = animationDuration;
         }
@@ -411,26 +420,31 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
             return this.canvas.getContext('2d');
         }
         placeNodes() {
-            var _a;
             const redOffset = 0.1;
-            const layers = [];
+            var layers = [];
             function clone(node, parent, depth) {
                 if (!layers[depth])
                     layers[depth] = [];
                 var nodeinfo = {
-                    depth: 0,
+                    posx: 0,
+                    posy: 0,
+                    depth: depth,
                     key: node === null || node === void 0 ? void 0 : node.key,
                     meta: node === null || node === void 0 ? void 0 : node.meta,
+                    parent: parent,
+                    cell: [],
                 };
-                nodeinfo.depth = depth;
-                nodeinfo.parent = parent;
-                if (node && RBTree_1.colorof(node.left) === "red" /* RED */)
-                    nodeinfo.left = clone(node.left, nodeinfo, depth);
-                layers[depth].push(nodeinfo);
+                if (RBTree_1.colorof(node) === "red" /* RED */ && parent)
+                    nodeinfo.cell = parent.cell;
+                else
+                    layers[depth].push(nodeinfo.cell);
                 if (node) {
-                    if (RBTree_1.colorof(node.left) === "black" /* BLACK */)
-                        nodeinfo.left = clone(node.left, nodeinfo, depth + 1);
+                    nodeinfo.left = clone(node.left, nodeinfo, RBTree_1.colorof(node.left) === "red" /* RED */ ? depth : depth + 1);
+                    nodeinfo.cell.push(nodeinfo);
                     nodeinfo.right = clone(node.right, nodeinfo, RBTree_1.colorof(node.right) === "red" /* RED */ ? depth : depth + 1);
+                }
+                else {
+                    nodeinfo.cell.push(nodeinfo);
                 }
                 return nodeinfo;
             }
@@ -439,51 +453,59 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
             const height = this.context.canvas.height;
             const layerSpacing = height / layers.length;
             const layerPad = 60;
-            for (let l = 0; l < layers.length; l++) {
-                const layer = layers[l];
-                const nodeSpacing = width / layer.length;
-                const nodePad = nodeSpacing / 2;
-                for (let n = 0; n < layer.length; n++) {
-                    const node = layer[n];
-                    node.posx = nodePad + n * nodeSpacing;
-                    node.posy = layerPad + l * layerSpacing;
-                    if (((_a = node.meta) === null || _a === void 0 ? void 0 : _a.color) === "red" /* RED */)
-                        node.posy += redOffset * layerSpacing;
-                }
-            }
             var placement = {};
             let nilCount = 0;
-            for (let nodeInfo of layers.reduce((a, v) => a.concat(v), [])) {
-                if (nodeInfo.key)
-                    placement[nodeInfo.key] = nodeInfo;
-                else
-                    placement['nil' + (nilCount++)] = nodeInfo;
+            for (let l = 0; l < layers.length; l++) {
+                const layer = layers[l];
+                const cellSpacing = width / layer.length;
+                const cellPad = cellSpacing / 2;
+                for (let c = 0; c < layer.length; c++) {
+                    const cell = layer[c];
+                    for (let n = 0; n < cell.length; n++) {
+                        const node = cell[n];
+                        node.posx = cellPad + c * cellSpacing + n * boxSize;
+                        node.posy = layerPad + l * layerSpacing;
+                        if (node.key) {
+                            // if node not NIL, offset the posx according to the boxes
+                            node.posx -= boxSize;
+                            // and add it to the placement hashmap
+                            placement[node.key] = node;
+                        }
+                        else {
+                            // tag the NIL so it moves with its parent
+                            placement[`nil_${tagNodeInfo(node)}`] = node;
+                        }
+                    }
+                }
             }
             return placement;
         }
         render() {
-            const newPlacement = this.placeNodes();
-            if (this.oldPlacement) {
-                const tStart = timing_1.nowMs();
-                const self = this;
-                function frame() {
-                    let t = timing_1.nowMs() - tStart;
-                    let interpolatedPlacement = self.interpolatePlacements(t / self.animationDuration, self.oldPlacement, newPlacement);
-                    console.log(t);
-                    self.drawPlacement(interpolatedPlacement);
-                    if (t < self.animationDuration)
-                        requestAnimationFrame(frame);
-                    else {
-                        self.drawPlacement(newPlacement);
-                        self.oldPlacement = newPlacement;
+            return __awaiter(this, void 0, void 0, function* () {
+                const newPlacement = this.placeNodes();
+                if (this.oldPlacement) {
+                    const tStart = timing_1.nowMs();
+                    const currentAnimation_ = ++this.currentAnimation;
+                    while (true) {
+                        let t = timing_1.nowMs() - tStart;
+                        let interpolatedPlacement = this.interpolatePlacements(t / this.animationDuration, this.oldPlacement, newPlacement);
+                        this.drawPlacement(interpolatedPlacement);
+                        if (this.currentAnimation !== currentAnimation_) {
+                            this.oldPlacement = interpolatedPlacement;
+                            break;
+                        }
+                        if (t >= this.animationDuration) {
+                            this.oldPlacement = newPlacement;
+                            break;
+                        }
+                        yield timing_1.sleepUntilNextFrame();
                     }
                 }
-                frame();
-            }
-            else {
-                this.drawPlacement(this.placeNodes());
-                this.oldPlacement = newPlacement;
-            }
+                else {
+                    this.drawPlacement(this.placeNodes());
+                    this.oldPlacement = newPlacement;
+                }
+            });
         }
         interpolatePlacements(amount, p1, p2) {
             const amtClamp = Math.max(0, Math.min(1, amount));
@@ -501,7 +523,7 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
             const p1Root = placementRoot(p1);
             const p2Root = placementRoot(p2);
             function clone(n, parent) {
-                const k = n.key == null ? `nil${nilCount++}` : n.key;
+                const k = n.key == null ? `nil_${tagNodeInfo(n)}` : n.key;
                 var newNode = Object.assign({}, n);
                 if (p1.hasOwnProperty(k) && p2.hasOwnProperty(k)) {
                     newNode.posx = lerp(p1[k].posx, p2[k].posx);
@@ -522,7 +544,7 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
             return result;
         }
         drawPlacement(placement) {
-            var _a;
+            var _a, _b, _c, _d;
             const ctx = this.context;
             const W = ctx.canvas.width;
             const H = ctx.canvas.height;
@@ -537,21 +559,47 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
                     for (let child of [n.left, n.right]) {
                         switch ((_a = child.meta) === null || _a === void 0 ? void 0 : _a.color) {
                             case "red" /* RED */:
-                                ctx.strokeStyle = '#F00';
                                 break;
                             default:
-                                ctx.strokeStyle = '#000';
                                 break;
                         }
                         ctx.beginPath();
                         ctx.moveTo(n.posx, n.posy);
+                        if (((_b = child.meta) === null || _b === void 0 ? void 0 : _b.color) === "red" /* RED */) {
+                            ctx.strokeStyle = '#F00';
+                        }
+                        else {
+                            ctx.strokeStyle = '#000';
+                            if (child === n.left)
+                                ctx.lineTo(n.posx - boxSize / 2, n.posy + boxSize / 2);
+                            else
+                                ctx.lineTo(n.posx + boxSize / 2, n.posy + boxSize / 2);
+                        }
                         ctx.lineTo(child.posx, child.posy);
                         ctx.stroke();
                     }
             }
-            const nodeSize = 30;
-            const nullWidth = nodeSize * 1.9;
-            // then draw the nodes over the lines
+            // then draw the boxes
+            for (let k in placement) {
+                if (!placement.hasOwnProperty(k))
+                    continue;
+                let n = placement[k];
+                const boxY = -boxSize / 2;
+                if (n.key && n.meta && n.meta.color === "black" /* BLACK */) {
+                    var boxX = -boxSize / 2;
+                    if (((_d = (_c = n.left) === null || _c === void 0 ? void 0 : _c.meta) === null || _d === void 0 ? void 0 : _d.color) === "red" /* RED */)
+                        boxX -= boxSize;
+                    ctx.translate(n.posx, n.posy);
+                    ctx.beginPath();
+                    ctx.fillStyle = '#FFF';
+                    ctx.strokeStyle = '#000';
+                    for (let i = 0; i < 3; i++)
+                        ctx.rect(boxX + i * boxSize, boxY, boxSize, boxSize);
+                    ctx.stroke();
+                    ctx.translate(-n.posx, -n.posy);
+                }
+            }
+            // then draw the nodes over the lines and boxes
             for (let k in placement) {
                 if (!placement.hasOwnProperty(k))
                     continue;
@@ -566,21 +614,21 @@ define("trees/VisualTree", ["require", "exports", "timing", "trees/RBTree"], fun
                     if (n.meta.color === "red" /* RED */)
                         ctx.strokeStyle = '#F00';
                     ctx.lineWidth = 3;
-                    ctx.ellipse(0, 0, nodeSize, nodeSize, 0, 0, 2 * Math.PI);
+                    ctx.ellipse(0, 0, nodeRadius, nodeRadius, 0, 0, 2 * Math.PI);
                     ctx.fill();
                     ctx.stroke();
                     ctx.beginPath();
                     ctx.fillStyle = ctx.strokeStyle;
-                    ctx.font = `${nodeSize * 1}px Times new roman`;
+                    ctx.font = `${nodeRadius * 1}px Times new roman`;
                     ctx.fillText(n.key.toString(), 0, 0);
                 }
                 else {
                     ctx.beginPath();
                     ctx.fillStyle = '#000';
-                    ctx.fillRect(-nullWidth / 2, -nodeSize / 2, nullWidth, nodeSize);
+                    ctx.fillRect(-nullWidth / 2, -nodeRadius / 2, nullWidth, nodeRadius);
                     ctx.beginPath();
                     ctx.fillStyle = '#FFF';
-                    ctx.font = `${nodeSize * 0.75}px Times new roman`;
+                    ctx.font = `${nodeRadius * 0.75}px Times new roman`;
                     ctx.fillText('NIL', 0, 0);
                 }
                 ctx.translate(-n.posx, -n.posy);

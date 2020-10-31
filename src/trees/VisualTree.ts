@@ -12,6 +12,7 @@ interface NodeInfo
     posx: number;
     posy: number;
 
+    cell: NodeInfo[];
     left?: NodeInfo;
     right?: NodeInfo;
     parent?: NodeInfo;
@@ -27,6 +28,16 @@ function placementRoot(p: NodePlacement): NodeInfo
     return node;
 }
 
+function tagNodeInfo(node: NodeInfo)
+{
+    return node.parent
+        ? (node === node.parent.left ? 'left' : 'right') + '_of_' + node.parent.key
+        : 'root';
+}
+
+const nodeRadius = 20;
+const boxSize = nodeRadius * 2 * 1.5;
+const nullWidth = nodeRadius * 1.9;
 
 export class VisualTree extends RBTree<__keytype>
 {
@@ -45,37 +56,43 @@ export class VisualTree extends RBTree<__keytype>
     }
 
     public animationDuration: number = 1000.0;
-
     private oldPlacement: NodePlacement;
+    private currentAnimation: number = 0;
 
     private placeNodes(): NodePlacement
     {
         const redOffset = 0.1;
 
-        const layers: NodeInfo[][] = [];
+        var layers: NodeInfo[][][] = [];
         function clone(node: Node | null, parent: NodeInfo | undefined, depth: number): NodeInfo
         {
             if (!layers[depth])
                 layers[depth] = [];
 
             var nodeinfo = {
-                depth: 0,
+                posx: 0,
+                posy: 0,
+                depth: depth,
                 key: node?.key,
                 meta: node?.meta,
+                parent: parent,
+                cell: [],
             } as NodeInfo;
-            nodeinfo.depth = depth;
-            nodeinfo.parent = parent;
 
-            if (node && colorof(node.left) === Color.RED)
-                nodeinfo.left = clone(node.left, nodeinfo, depth);
-
-            layers[depth].push(nodeinfo);
+            if (colorof(node) === Color.RED && parent)
+                nodeinfo.cell = parent.cell;
+            else
+                layers[depth].push(nodeinfo.cell);
 
             if (node)
             {
-                if (colorof(node.left) === Color.BLACK)
-                    nodeinfo.left = clone(node.left, nodeinfo, depth + 1);
+                nodeinfo.left = clone(node.left, nodeinfo, colorof(node.left) === Color.RED ? depth : depth + 1);
+                nodeinfo.cell.push(nodeinfo);
                 nodeinfo.right = clone(node.right, nodeinfo, colorof(node.right) === Color.RED ? depth : depth + 1);
+            }
+            else
+            {
+                nodeinfo.cell.push(nodeinfo);
             }
 
             return nodeinfo;
@@ -89,69 +106,77 @@ export class VisualTree extends RBTree<__keytype>
         const layerSpacing = height / layers.length;
         const layerPad = 60;
 
-        for (let l = 0; l < layers.length; l++)
-        {
-            const layer = layers[l];
-            const nodeSpacing = width / layer.length;
-            const nodePad = nodeSpacing / 2;
-
-            for (let n = 0; n < layer.length; n++)
-            {
-                const node = layer[n];
-                node.posx = nodePad + n * nodeSpacing;
-                node.posy = layerPad + l * layerSpacing;
-
-                if (node.meta?.color === Color.RED)
-                    node.posy += redOffset * layerSpacing;
-            }
-        }
-
         var placement: NodePlacement = {};
         let nilCount = 0;
 
-        for (let nodeInfo of layers.reduce((a, v) => a.concat(v), []))
+        for (let l = 0; l < layers.length; l++)
         {
-            if (nodeInfo.key)
-                placement[nodeInfo.key] = nodeInfo;
-            else
-                placement['nil' + (nilCount++)] = nodeInfo;
+            const layer = layers[l];
+            const cellSpacing = width / layer.length;
+            const cellPad = cellSpacing / 2;
+
+            for (let c = 0; c < layer.length; c++)
+            {
+                const cell = layer[c];
+                for (let n = 0; n < cell.length; n++)
+                {
+                    const node = cell[n];
+                    node.posx = cellPad + c * cellSpacing + n * boxSize;
+                    node.posy = layerPad + l * layerSpacing;
+
+                    if (node.key)
+                    {
+                        // if node not NIL, offset the posx according to the boxes
+                        node.posx -= boxSize;
+                        // and add it to the placement hashmap
+                        placement[node.key] = node;
+                    }
+                    else
+                    {
+                        // tag the NIL so it moves with its parent
+                        placement[`nil_${tagNodeInfo(node)}`] = node;
+                    }
+                }
+            }
         }
 
         return placement;
     }
 
-    render()
+    async render()
     {
         const newPlacement = this.placeNodes();
 
         if (this.oldPlacement)
         {
             const tStart = nowMs();
-            const self = this;
+            const currentAnimation_ = ++this.currentAnimation;
 
-            function frame()
+            while (true)
             {
                 let t = nowMs() - tStart;
-                let interpolatedPlacement = self.interpolatePlacements(
-                    t / self.animationDuration,
-                    self.oldPlacement,
+                let interpolatedPlacement = this.interpolatePlacements(
+                    t / this.animationDuration,
+                    this.oldPlacement,
                     newPlacement
                 );
 
-                console.log(t);
+                this.drawPlacement(interpolatedPlacement);
 
-                self.drawPlacement(interpolatedPlacement);
-
-                if (t < self.animationDuration)
-                    requestAnimationFrame(frame);
-                else
+                if (this.currentAnimation !== currentAnimation_)
                 {
-                    self.drawPlacement(newPlacement);
-                    self.oldPlacement = newPlacement;
+                    this.oldPlacement = interpolatedPlacement;
+                    break;
                 }
-            }
 
-            frame();
+                if (t >= this.animationDuration)
+                {
+                    this.oldPlacement = newPlacement;
+                    break;
+                }
+
+                await sleepUntilNextFrame();
+            }
         }
         else
         {
@@ -183,7 +208,7 @@ export class VisualTree extends RBTree<__keytype>
 
         function clone(n: NodeInfo, parent?: NodeInfo)
         {
-            const k = n.key == null ? `nil${nilCount++}` : n.key;
+            const k = n.key == null ? `nil_${tagNodeInfo(n)}` : n.key;
             var newNode = Object.assign({}, n);
 
             if (p1.hasOwnProperty(k) && p2.hasOwnProperty(k))
@@ -229,24 +254,58 @@ export class VisualTree extends RBTree<__keytype>
                 switch (child.meta?.color)
                 {
                     case Color.RED:
-                        ctx.strokeStyle = '#F00';
                         break;
                     default:
-                        ctx.strokeStyle = '#000';
                         break;
                 }
 
                 ctx.beginPath();
                 ctx.moveTo(n.posx, n.posy);
+
+                if (child.meta?.color === Color.RED)
+                {
+                    ctx.strokeStyle = '#F00';
+                }
+                else
+                {
+                    ctx.strokeStyle = '#000';
+                    if (child === n.left)
+                        ctx.lineTo(n.posx - boxSize / 2, n.posy + boxSize / 2);
+                    else
+                        ctx.lineTo(n.posx + boxSize / 2, n.posy + boxSize / 2);
+                }
+
                 ctx.lineTo(child.posx, child.posy);
                 ctx.stroke();
             }
         }
 
-        const nodeSize = 30;
-        const nullWidth = nodeSize * 1.9;
+        // then draw the boxes
+        for (let k in placement)
+        {
+            if (!placement.hasOwnProperty(k)) continue;
+            let n = placement[k];
 
-        // then draw the nodes over the lines
+            const boxY = -boxSize / 2;
+
+            if (n.key && n.meta && n.meta.color === Color.BLACK)
+            {
+                var boxX = -boxSize / 2;
+                if (n.left?.meta?.color === Color.RED)
+                    boxX -= boxSize;
+
+                ctx.translate(n.posx, n.posy);
+                ctx.beginPath();
+                ctx.fillStyle = '#FFF';
+                ctx.strokeStyle = '#000';
+                for (let i = 0; i < 3; i++)
+                    ctx.rect(boxX + i * boxSize, boxY, boxSize, boxSize);
+                ctx.stroke();
+                ctx.translate(-n.posx, -n.posy);
+            }
+        }
+
+        // then draw the nodes over the lines and boxes
         for (let k in placement)
         {
             if (!placement.hasOwnProperty(k)) continue;
@@ -264,24 +323,24 @@ export class VisualTree extends RBTree<__keytype>
                 if (n.meta.color === Color.RED)
                     ctx.strokeStyle = '#F00';
                 ctx.lineWidth = 3;
-                ctx.ellipse(0, 0, nodeSize, nodeSize, 0, 0, 2 * Math.PI);
+                ctx.ellipse(0, 0, nodeRadius, nodeRadius, 0, 0, 2 * Math.PI);
                 ctx.fill();
                 ctx.stroke();
 
                 ctx.beginPath();
                 ctx.fillStyle = ctx.strokeStyle;
-                ctx.font = `${nodeSize * 1}px Times new roman`;
+                ctx.font = `${nodeRadius * 1}px Times new roman`;
                 ctx.fillText(n.key.toString(), 0, 0);
             }
             else
             {
                 ctx.beginPath();
                 ctx.fillStyle = '#000';
-                ctx.fillRect(-nullWidth / 2, -nodeSize / 2, nullWidth, nodeSize);
+                ctx.fillRect(-nullWidth / 2, -nodeRadius / 2, nullWidth, nodeRadius);
 
                 ctx.beginPath();
                 ctx.fillStyle = '#FFF';
-                ctx.font = `${nodeSize * 0.75}px Times new roman`;
+                ctx.font = `${nodeRadius * 0.75}px Times new roman`;
                 ctx.fillText('NIL', 0, 0);
             }
 
